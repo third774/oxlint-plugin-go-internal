@@ -1,5 +1,11 @@
 # oxlint-plugin-go-internal
 
+## 0.1.1
+
+### Patch Changes
+
+- 57e8e5e: Fix the README link to the Go documentation about internal packages.
+
 ## 0.1.0
 
 ### Minor Changes
