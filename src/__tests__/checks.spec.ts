@@ -5,7 +5,7 @@ import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
 
 import { createTsconfigAliasResolver } from '../aliases.ts';
-import { importViolations, reExportViolation, resolveSpecifier } from '../checks.ts';
+import { importViolation, reExportViolation, resolveSpecifier } from '../checks.ts';
 
 const project = fileURLToPath(new URL('../../fixtures/project/', import.meta.url));
 const src = path.join(project, 'src');
@@ -22,7 +22,7 @@ const outcome = (importerDirectory: string, specifier: string) => {
   return resolution._tag === 'Targets'
     ? {
         targets: resolution.targets,
-        imports: importViolations(importerDirectory, resolution.targets),
+        imports: importViolation(importerDirectory, resolution.targets),
         reExport: reExportViolation(importerDirectory, resolution.targets),
       }
     : resolution;
@@ -51,7 +51,7 @@ describe('checks', () => {
 
         fc.pre(reExportViolation(importerDirectory, targets) === undefined);
 
-        expect(importViolations(importerDirectory, targets).filter((violation) => violation._tag === 'InternalImport')).toStrictEqual([]);
+        expect(importViolation(importerDirectory, targets)?._tag).not.toBe('InternalImport');
       }),
     );
   });

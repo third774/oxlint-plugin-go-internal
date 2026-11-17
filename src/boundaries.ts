@@ -3,7 +3,7 @@ import path from 'node:path';
 import type { Context, CreateOnceRule, Definition, ESTree, Ranged, Scope, Variable } from '@oxlint/plugins';
 
 import { createTsconfigAliasResolver } from './aliases.ts';
-import { importViolations, reExportViolation, resolveSpecifier } from './checks.ts';
+import { importViolation, reExportViolation, resolveSpecifier } from './checks.ts';
 import { displayPath, isInternalModule } from './module-path.ts';
 import { optionsSchema, parseOptions } from './options.ts';
 import type { RuleOptions } from './options.ts';
@@ -22,15 +22,16 @@ interface ReExport {
 
 const messages = {
   internalImport:
-    '`{{specifier}}` is internal to `{{boundary}}/`. Only files under `{{boundary}}/` can import it. Import a public module of `{{boundary}}/` instead.',
-  internalDirectoryImport: '`{{specifier}}` imports an `internal` directory, not a file. Import the file inside `{{path}}/` that you need.',
+    '`{{specifier}}` is internal to `{{boundary}}/`, so only files under `{{boundary}}/` can import it. Check whether a public module of `{{boundary}}/` already gives you what you need. If not, consider whether this code should become part of the public API of `{{boundary}}/`, or whether this file should depend on it at all. A copy of the code would be a second version that drifts from the first.',
+  internalDirectoryImport:
+    '`{{specifier}}` ends at `internal`, which is reserved for a directory. Import the module inside `{{path}}/` that you need, so that the import shows which private code this file uses.',
   internalModuleName:
-    'Do not name a module `internal`. `internal` must always be a directory, so that `internal` in an import path has one meaning.',
+    'Do not name a module `internal`. The name `internal` marks a directory of private code, so a module with that name gives `internal` in an import path two meanings. Rename this module, or move its code into a file inside an `internal/` directory.',
   internalReExport:
-    '`{{name}}` comes from `{{specifier}}`, which only files under `{{boundary}}/` can import. Only files inside `{{internalDirectory}}/` can re-export it. To publish it, declare a new export in this file.',
+    '`{{name}}` comes from `{{specifier}}`, which is internal to `{{boundary}}/`. A re-export would make it public to every file as a side effect. If `{{name}}` should be part of the public API, declare a new export for it in this file. If not, consider whether this file needs to export it at all.',
   unknownAlias:
-    '`{{specifier}}` starts with `#`, but no `paths` entry in `{{tsconfig}}` matches it, so the internal-boundary check cannot read it. Add the alias to `paths`.',
-  unresolvedSpecifier: 'This module specifier is not a string, so the internal-boundary check cannot read it. Use a string literal.',
+    '`{{specifier}}` starts with `#`, but no `paths` entry in `{{tsconfig}}` matches it, so this rule cannot check where it points. Add the alias to `paths`.',
+  unresolvedSpecifier: 'This module specifier is not a string, so this rule cannot check where it points. Use a string literal.',
 } satisfies Record<string, string>;
 
 /** The value of a string literal, or of a template literal with no expressions. */
@@ -117,23 +118,23 @@ const createVisitor = (context: Context) => {
           },
         });
         return;
-      case 'Targets':
-        for (const violation of importViolations(importerDirectory, resolution.targets)) {
-          if (violation._tag === 'InternalImport') {
-            context.report({
-              node,
-              messageId: 'internalImport',
-              data: { specifier, boundary: displayPath(cwd, violation.boundary.owner) },
-            });
-          } else {
-            context.report({
-              node,
-              messageId: 'internalDirectoryImport',
-              data: { specifier, path: displayPath(cwd, violation.internalDirectory) },
-            });
-          }
+      case 'Targets': {
+        const violation = importViolation(importerDirectory, resolution.targets);
+        if (violation?._tag === 'InternalImport') {
+          context.report({
+            node,
+            messageId: 'internalImport',
+            data: { specifier, boundary: displayPath(cwd, violation.boundary.owner) },
+          });
+        } else if (violation?._tag === 'InternalDirectoryImport') {
+          context.report({
+            node,
+            messageId: 'internalDirectoryImport',
+            data: { specifier, path: displayPath(cwd, violation.internalDirectory) },
+          });
         }
         return;
+      }
     }
   };
 
@@ -152,12 +153,7 @@ const createVisitor = (context: Context) => {
       context.report({
         node,
         messageId: 'internalReExport',
-        data: {
-          name,
-          specifier,
-          boundary: displayPath(cwd, boundary.owner),
-          internalDirectory: displayPath(cwd, boundary.internalDirectory),
-        },
+        data: { name, specifier, boundary: displayPath(cwd, boundary.owner) },
       });
     }
   };
