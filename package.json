@@ -1,0 +1,75 @@
+{
+  "name": "oxlint-plugin-go-internal",
+  "version": "0.0.0",
+  "description": "An oxlint JS plugin that enforces Go's internal directory rule on TypeScript and JavaScript imports",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/third774/oxlint-plugin-go-internal.git"
+  },
+  "keywords": [
+    "oxlint",
+    "oxlint-plugin",
+    "oxc",
+    "lint",
+    "linter",
+    "lint-rule",
+    "go",
+    "golang",
+    "internal",
+    "internal-packages",
+    "internal-directory",
+    "encapsulation",
+    "imports",
+    "import-restrictions",
+    "module-boundaries",
+    "architecture",
+    "typescript",
+    "javascript"
+  ],
+  "files": [
+    "dist"
+  ],
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.mts",
+      "import": "./dist/index.mjs"
+    }
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsdown",
+    "changeset": "changeset",
+    "version-packages": "changeset version && pnpm install --lockfile-only",
+    "checks": "pnpm build && pnpm typecheck && pnpm lint && pnpm format && pnpm test",
+    "lint": "oxlint --type-aware .",
+    "lint:fix": "oxlint --type-aware --fix .",
+    "format": "oxfmt --check .",
+    "format:write": "oxfmt --write .",
+    "prepack": "pnpm build",
+    "test": "vitest run",
+    "typecheck": "oxlint --type-aware --type-check ."
+  },
+  "dependencies": {
+    "@oxlint/plugins": "1.92.0",
+    "get-tsconfig": "^4.14.3"
+  },
+  "devDependencies": {
+    "@changesets/cli": "^3.0.3",
+    "@types/node": "^26.4.0",
+    "fast-check": "4.10.2",
+    "oxfmt": "^0.65.0",
+    "oxlint": "1.92.0",
+    "oxlint-tsgolint": "7.0.2006",
+    "tsdown": "^0.23.0",
+    "typescript": "7.0.2",
+    "vitest": "^4.1.11"
+  },
+  "peerDependencies": {
+    "oxlint": "^1.92.0"
+  },
+  "packageManager": "pnpm@11.25.0"
+}

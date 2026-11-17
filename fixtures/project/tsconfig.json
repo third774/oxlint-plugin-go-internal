@@ -1,0 +1,8 @@
+{
+  "compilerOptions": {
+    "paths": {
+      "#/*": ["./src/*"],
+      "#both/*": ["./src/teams/*", "./src/teams/internal/*"]
+    }
+  }
+}

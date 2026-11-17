@@ -1,0 +1,15 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": ["typescript", "unicorn", "oxc"],
+  "jsPlugins": ["./src/index.ts"],
+  "categories": {
+    "correctness": "error"
+  },
+  "ignorePatterns": ["dist"],
+  "rules": {
+    "go-internal/boundaries": "error"
+  },
+  "env": {
+    "builtin": true
+  }
+}
