@@ -2,7 +2,7 @@
 
 Private directories for TypeScript and JavaScript. Put code in an `internal/` directory, and only the code next to that directory can import it.
 
-This [oxlint JS plugin](https://oxc.rs/docs/guide/usage/linter/js-plugins.html) applies Go's [`internal` directory rule](https://pkg.go.dev/cmd/go#hdr-Internal_Directories) to imports.
+This [oxlint JS plugin](https://oxc.rs/docs/guide/usage/linter/js-plugins.html) applies Go's [`internal` directory rule](https://pkg.go.dev/cmd/go#hdr-Internal_packages) to imports.
 
 ## Why
 
