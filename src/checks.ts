@@ -54,11 +54,12 @@ const internalDirectoryImport = (target: string): ImportViolation | undefined =>
       }
     : undefined;
 
-/** Both import checks. Each check reports once, for the first target that breaks it. */
-export const importViolations = (importerDirectory: string, targets: readonly string[]): readonly ImportViolation[] =>
-  [firstDefined(targets, (target) => internalImport(importerDirectory, target)), firstDefined(targets, internalDirectoryImport)].filter(
-    (violation) => violation !== undefined,
-  );
+/**
+ * Both import checks, for the first target that breaks one. A file that cannot import the code
+ * gets only the internal import, so that it is not told to import a file inside the directory.
+ */
+export const importViolation = (importerDirectory: string, targets: readonly string[]): ImportViolation | undefined =>
+  firstDefined(targets, (target) => internalImport(importerDirectory, target)) ?? firstDefined(targets, internalDirectoryImport);
 
 /**
  * A file can re-export internal code only from inside that code's `internal/` directory,

@@ -100,7 +100,7 @@ A call in this list with a non-string first argument is not reported. Vitest acc
 | `messageId`               | Cause                                                                                                    |
 | ------------------------- | -------------------------------------------------------------------------------------------------------- |
 | `internalImport`          | A file outside `P/` imports a module under `P/internal/`.                                                |
-| `internalDirectoryImport` | An import ends at an `internal` directory, or at a module named `internal`.                              |
+| `internalDirectoryImport` | A file under `P/` imports `P/internal` itself, or a module named `internal`, not a module inside it.     |
 | `internalModuleName`      | The linted file is a module named `internal`.                                                            |
 | `internalReExport`        | A file outside `P/internal/` re-exports code from under `P/internal/`.                                   |
 | `unknownAlias`            | A `#` specifier matches no `paths` entry of the nearest tsconfig, or no tsconfig is found.               |
