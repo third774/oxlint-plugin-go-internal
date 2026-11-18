@@ -34,10 +34,10 @@ export const optionsSchema: RuleOptionsSchema = [
   },
 ];
 
+const DEFAULT_OPTIONS: RuleOptions = { moduleCallees: new Set(DEFAULT_MODULE_CALLEES) };
+
 export const parseOptions = (options: Readonly<Options>): RuleOptions => {
   const [first] = options;
   const callees = typeof first === 'object' && first !== null && !Array.isArray(first) ? first['moduleCallees'] : undefined;
-  return {
-    moduleCallees: new Set(Array.isArray(callees) ? callees.filter((callee) => typeof callee === 'string') : DEFAULT_MODULE_CALLEES),
-  };
+  return Array.isArray(callees) ? { moduleCallees: new Set(callees.filter((callee) => typeof callee === 'string')) } : DEFAULT_OPTIONS;
 };

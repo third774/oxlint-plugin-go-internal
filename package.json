@@ -42,6 +42,7 @@
   },
   "scripts": {
     "build": "tsdown",
+    "bench": "pnpm build && node scripts/benchmark.ts",
     "changeset": "changeset",
     "version-packages": "changeset version && pnpm install --lockfile-only",
     "checks": "pnpm build && pnpm typecheck && pnpm lint && pnpm format && pnpm test",

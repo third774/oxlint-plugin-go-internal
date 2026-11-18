@@ -5,7 +5,7 @@ import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
 
 import { createTsconfigAliasResolver } from '../aliases.ts';
-import { importViolation, reExportViolation, resolveSpecifier } from '../checks.ts';
+import { createSpecifierResolver, importViolation, reExportViolation, resolveSpecifier } from '../checks.ts';
 
 const project = fileURLToPath(new URL('../../fixtures/project/', import.meta.url));
 const src = path.join(project, 'src');
@@ -39,6 +39,20 @@ describe('checks', () => {
         const aliasSpecifier = `#/${target.join('/')}`;
 
         expect(outcome(importerDirectory, relativeSpecifier)).toStrictEqual(outcome(importerDirectory, aliasSpecifier));
+      }),
+    );
+  });
+
+  it('resolve a specifier the same way when they keep resolutions', () => {
+    const resolve = createSpecifierResolver(aliases);
+    fc.assert(
+      fc.property(segments(0), segments(1), fc.constantFrom('./', '../', '#/', 'package/'), (importer, target, prefix) => {
+        const importerDirectory = path.join(src, ...importer);
+        const specifier = `${prefix}${target.join('/')}`;
+        const expected = resolveSpecifier(specifier, importerDirectory, aliases);
+
+        expect(resolve(specifier, importerDirectory)).toStrictEqual(expected);
+        expect(resolve(specifier, importerDirectory)).toStrictEqual(expected);
       }),
     );
   });
