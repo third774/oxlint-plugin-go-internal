@@ -1,15 +1,16 @@
 /**
  * Measures what the `go-internal/boundaries` rule costs on a generated codebase.
  *
- * The codebase has one scenario per kind of module specifier, so the benchmark shows which
- * specifiers pay for the tsconfig lookup. `rule off` loads the plugin without running the rule,
- * and `none` omits the plugin, so the difference between them and `rule on` is the rule itself.
+ * The codebase has one scenario per way that a file refers to a module, so the benchmark shows
+ * which of them pay for the tsconfig lookup or for scope analysis. `rule off` loads the plugin
+ * without running the rule, and `none` omits the plugin, so the difference between them and
+ * `rule on` is the rule itself.
  *
  * Run it with `pnpm bench`, or against a build from another branch with
  * `node scripts/benchmark.ts --plugin ../other-branch/dist/index.mjs`.
  */
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -17,19 +18,23 @@ import { parseArgs } from 'node:util';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const oxlintBin = path.join(root, 'node_modules/oxlint/bin/oxlint');
-const DEEP = path.join('src', 'a', 'b', 'c', 'd', 'e');
-const SCENARIOS = ['relative', 'package', 'alias'] as const;
+const DEEP = ['src', 'a', 'b', 'c', 'd', 'e'];
+const SCENARIOS = ['relative', 'package', 'alias', 'local-export', 'require'] as const;
 
 type Scenario = (typeof SCENARIOS)[number];
 
+/** Where the generated codebase goes: a temporary directory that the benchmark removes, or a directory that the user gave. */
+type Output = { readonly _tag: 'Temporary' } | { readonly _tag: 'Directory'; readonly path: string };
+
 interface Options {
-  readonly directory: string | undefined;
+  readonly output: Output;
   readonly files: number;
+  readonly filesPerDirectory: number;
   readonly imports: number;
+  readonly statements: number;
   readonly runs: number;
   readonly plugin: string;
   readonly json: boolean;
-  readonly keep: boolean;
 }
 
 interface Result {
@@ -39,60 +44,85 @@ interface Result {
   readonly on: number;
 }
 
+const positiveInteger = (name: string, value: string): number => {
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < 1) {
+    throw new Error(`--${name} must be a positive integer, not ${value}`);
+  }
+  return parsed;
+};
+
 const parseOptions = (): Options => {
   const { values } = parseArgs({
     options: {
       dir: { type: 'string' },
-      files: { type: 'string', default: '1000' },
+      files: { type: 'string', default: '1500' },
+      'files-per-directory': { type: 'string', default: '10' },
       imports: { type: 'string', default: '20' },
-      runs: { type: 'string', default: '5' },
+      statements: { type: 'string', default: '50' },
+      runs: { type: 'string', default: '7' },
       plugin: { type: 'string', default: path.join(root, 'dist/index.mjs') },
       json: { type: 'boolean', default: false },
-      keep: { type: 'boolean', default: false },
     },
   });
   return {
-    directory: values.dir,
-    files: Number(values.files),
-    imports: Number(values.imports),
-    runs: Number(values.runs),
+    output: values.dir === undefined ? { _tag: 'Temporary' } : { _tag: 'Directory', path: path.resolve(values.dir) },
+    files: positiveInteger('files', values.files),
+    filesPerDirectory: positiveInteger('files-per-directory', values['files-per-directory']),
+    imports: positiveInteger('imports', values.imports),
+    statements: positiveInteger('statements', values.statements),
+    runs: positiveInteger('runs', values.runs),
     plugin: path.resolve(values.plugin),
     json: values.json,
-    keep: values.keep,
   };
 };
 
-const specifier = (scenario: Scenario, index: number): string => {
+/** The statements that bind `a${index}` to the export of the module `index`, for a file one directory below `DEEP`. */
+const binding = (scenario: Scenario, index: number): string => {
   switch (scenario) {
     case 'relative':
-      return `./impl/mod${index}`;
+    case 'local-export':
+      return `import { a${index} } from '../impl/mod${index}';`;
     case 'package':
-      return `some-package-${index}/lib/x`;
+      return `import { a${index} } from 'some-package-${index}/lib/x';`;
     case 'alias':
-      return `@/${DEEP.split(path.sep).slice(1).join('/')}/impl/mod${index}`;
+      return `import { a${index} } from '@/${DEEP.slice(1).join('/')}/impl/mod${index}';`;
+    case 'require':
+      return `const { a${index} } = require('../impl/mod${index}');`;
   }
+};
+
+/** Code that does not refer to a module, so that the files have something for scope analysis to read. */
+const body = (statements: number): string[] => {
+  const lines = ['export function work(input: number[]): number {', '  let total = 0;'];
+  for (let statement = 0; statement < statements; statement += 1) {
+    lines.push(`  total += input.filter((value) => value > ${statement}).map((value) => value * total).length;`);
+  }
+  lines.push('  return total;', '}');
+  return lines;
 };
 
 const writeJson = (file: string, value: unknown): void => {
   writeFileSync(file, `${JSON.stringify(value, null, 2)}\n`);
 };
 
-/** Writes one scenario: `files` modules that import `imports` modules, and the modules they import. */
+/** Writes one scenario: `files` modules, `filesPerDirectory` to a directory, that each use `imports` modules. */
 const generate = (directory: string, scenario: Scenario, options: Options): void => {
-  const source = path.join(directory, DEEP);
+  const source = path.join(directory, ...DEEP);
   mkdirSync(path.join(source, 'impl'), { recursive: true });
   writeJson(path.join(directory, 'tsconfig.json'), {
     compilerOptions: { baseUrl: '.', paths: { '@/*': ['./src/*'] } },
   });
+  const names = Array.from({ length: options.imports }, (_, index) => `a${index}`);
+  const exports =
+    scenario === 'local-export'
+      ? [`export { ${names.join(', ')} };`, `export default a0;`]
+      : [`export const values = [${names.join(', ')}];`];
+  const contents = [...names.map((_, index) => binding(scenario, index)), ...exports, ...body(options.statements)].join('\n');
   for (let file = 0; file < options.files; file += 1) {
-    const lines: string[] = [];
-    const used: string[] = [];
-    for (let index = 0; index < options.imports; index += 1) {
-      lines.push(`import { a${index} } from '${specifier(scenario, index)}';`);
-      used.push(`a${index}`);
-    }
-    lines.push(`export const values = [${used.join(', ')}];`);
-    writeFileSync(path.join(source, `file${file}.ts`), `${lines.join('\n')}\n`);
+    const fileDirectory = path.join(source, `dir${Math.floor(file / options.filesPerDirectory)}`);
+    mkdirSync(fileDirectory, { recursive: true });
+    writeFileSync(path.join(fileDirectory, `file${file}.ts`), `${contents}\n`);
   }
   for (let index = 0; index < options.imports; index += 1) {
     writeFileSync(path.join(source, 'impl', `mod${index}.ts`), `export const a${index} = ${index};\n`);
@@ -120,7 +150,7 @@ const configs = (directory: string, options: Options): Record<'none' | 'off' | '
   };
 };
 
-/** Milliseconds for one `oxlint` run. A rule that reports a problem exits with 1. */
+/** Milliseconds for one `oxlint` run. The generated code breaks no rule, so any exit status but 0 is a failure. */
 const lint = (directory: string, config: string): number => {
   const started = process.hrtime.bigint();
   const result = spawnSync(process.execPath, [oxlintBin, '--config', config, 'src', '--quiet'], {
@@ -128,8 +158,8 @@ const lint = (directory: string, config: string): number => {
     encoding: 'utf8',
   });
   const elapsed = Number(process.hrtime.bigint() - started) / 1e6;
-  if (result.status !== 0 && result.status !== 1) {
-    throw new Error(`oxlint exited with ${String(result.status)}: ${result.stderr}`);
+  if (result.status !== 0) {
+    throw new Error(`oxlint exited with ${String(result.status)} in ${directory}:\n${result.stdout}${result.stderr}`);
   }
   return elapsed;
 };
@@ -152,25 +182,34 @@ const measure = (directory: string, config: string, runs: number): number => {
 const millis = (value: number): string => `${value.toFixed(0)}ms`;
 
 const table = (results: readonly Result[], options: Options): string => {
-  const lines = [
-    `| specifiers | oxlint only | plugin, rule off | plugin, rule on | rule cost |`,
+  const directories = Math.ceil(options.files / options.filesPerDirectory);
+  return [
+    `${options.files} files in ${directories} directories, ${options.imports} module references and ${options.statements} other statements each; median of ${options.runs} runs`,
+    '',
+    `| scenario | oxlint only | plugin, rule off | plugin, rule on | rule cost |`,
     `| --- | --- | --- | --- | --- |`,
     ...results.map(
       (result) =>
         `| ${result.scenario} | ${millis(result.none)} | ${millis(result.off)} | ${millis(result.on)} | +${millis(result.on - result.off)} |`,
     ),
-  ];
-  return [
-    `${options.files} files × ${options.imports} imports = ${(options.files * options.imports).toLocaleString('en-US')} specifiers`,
-    '',
-    ...lines,
   ].join('\n');
+};
+
+/** The directory to generate into. A directory that the user gave must be empty or new, because the benchmark writes over its files. */
+const prepare = (output: Output): string => {
+  if (output._tag === 'Temporary') {
+    return mkdtempSync(path.join(tmpdir(), 'boundaries-bench-'));
+  }
+  if (existsSync(output.path) && readdirSync(output.path).length > 0) {
+    throw new Error(`--dir ${output.path} is not empty`);
+  }
+  mkdirSync(output.path, { recursive: true });
+  return output.path;
 };
 
 const main = (): void => {
   const options = parseOptions();
-  const directory = options.directory ?? mkdtempSync(path.join(tmpdir(), 'go-internal-bench-'));
-  mkdirSync(directory, { recursive: true });
+  const directory = prepare(options.output);
   try {
     const config = configs(directory, options);
     const results = SCENARIOS.map((scenario): Result => {
@@ -190,7 +229,7 @@ const main = (): void => {
       console.log(`\nplugin: ${options.plugin}\nnode: ${process.version} on ${process.platform} ${process.arch}`);
     }
   } finally {
-    if (!options.keep) {
+    if (options.output._tag === 'Temporary') {
       rmSync(directory, { recursive: true, force: true });
     }
   }
