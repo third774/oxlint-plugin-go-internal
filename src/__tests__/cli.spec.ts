@@ -67,7 +67,7 @@ describe('oxlint CLI', () => {
     expect(result.stderr).toBe('');
     expect([...diagnostics(result.stdout)].sort()).toStrictEqual([
       'src/db/x.ts:1 `#/teams/internal/rows` is internal to `src/teams/`, so only files under `src/teams/` can import it. Check whether a public module of `src/teams/` already gives you what you need. If not, consider whether this code should become part of the public API of `src/teams/`, or whether this file should depend on it at all. A copy of the code would be a second version that drifts from the first.',
-      'src/db/x.ts:2 `rows` comes from `#/teams/internal/rows`, which is internal to `src/teams/`. A re-export would make it public to every file as a side effect. If `rows` should be part of the public API, declare a new export for it in this file. If not, consider whether this file needs to export it at all.',
+      'src/db/x.ts:2 `rows` comes from `#/teams/internal/rows`, which is internal to `src/teams/`. A re-export would make it public to every file as a side effect. Check which files outside `src/teams/` need `rows`. If none do, remove the re-export. If some do, you can declare a new export for it in this file. That is a change to the public API of `src/teams/`, with the same effect as the re-export, so make it only for that need.',
       'src/teams/internal.ts:1 Do not name a module `internal`. The name `internal` marks a directory of private code, so a module with that name gives `internal` in an import path two meanings. Rename this module, or move its code into a file inside an `internal/` directory.',
     ]);
     expect(result.status).toBe(1);

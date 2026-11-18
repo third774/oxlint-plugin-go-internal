@@ -175,7 +175,7 @@ describe('go-internal/boundaries', () => {
         { messageId: 'internalReExport' },
       ]),
       invalid('src/teams/store.ts', "import * as store from './internal/storage/store'; export { store };", [
-        { messageId: 'internalReExport' },
+        { messageId: 'internalModuleReExport' },
       ]),
       invalid('src/teams/store.ts', "export { TeamRow }; import { TeamRow } from './internal/storage/store';", [
         { messageId: 'internalReExport', data: { name: 'TeamRow', specifier: './internal/storage/store', boundary: 'src/teams' } },
@@ -187,12 +187,17 @@ describe('go-internal/boundaries', () => {
         { messageId: 'internalReExport' },
       ]),
       invalid('src/teams/store.ts', "import store = require('./internal/storage/store'); export = store;", [
-        { messageId: 'internalReExport' },
+        { messageId: 'internalModuleReExport' },
       ]),
-      invalid('src/teams/store.ts', "export import store = require('./internal/storage/store');", [{ messageId: 'internalReExport' }]),
+      invalid('src/teams/store.ts', "export import store = require('./internal/storage/store');", [
+        { messageId: 'internalModuleReExport' },
+      ]),
+      invalid('src/teams/store.ts', "declare module 'teams' { import * as store from './internal/storage/store'; export { store }; }", [
+        { messageId: 'internalModuleReExport' },
+      ]),
       invalid('src/teams/index.ts', "export * from './internal/x';", [
         {
-          messageId: 'internalReExport',
+          messageId: 'internalModuleReExport',
           data: {
             name: '*',
             specifier: './internal/x',
@@ -202,7 +207,7 @@ describe('go-internal/boundaries', () => {
       ]),
       invalid('src/teams/index.ts', "export * as x from './internal/x';", [
         {
-          messageId: 'internalReExport',
+          messageId: 'internalModuleReExport',
           data: {
             name: 'x',
             specifier: './internal/x',
@@ -212,7 +217,7 @@ describe('go-internal/boundaries', () => {
       ]),
       invalid('src/teams/internal/storage/index.ts', "export * from './internal/sql';", [
         {
-          messageId: 'internalReExport',
+          messageId: 'internalModuleReExport',
           data: {
             name: '*',
             specifier: './internal/sql',
@@ -221,7 +226,7 @@ describe('go-internal/boundaries', () => {
         },
       ]),
       invalid('src/teams/internal/index.ts', "export * from './storage/internal/sql';", [
-        { messageId: 'internalReExport' },
+        { messageId: 'internalModuleReExport' },
         { messageId: 'internalImport' },
       ]),
       invalid('src/db/index.ts', "export { rows } from '#/teams/internal/rows';", [
@@ -240,13 +245,18 @@ describe('go-internal/boundaries', () => {
           data: {
             specifier: '#teams/internal/rows',
             reason: 'no entry in the `paths` of `tsconfig.json` or the `imports` of `package.json` matches it',
+            where: '`imports` in package.json, or to `paths` in tsconfig.json',
           },
         },
       ]),
       invalid('src/db/x.ts', "import { rows } from '@/teams/internal/rows';", [
         {
           messageId: 'unknownAlias',
-          data: { specifier: '@/teams/internal/rows', reason: 'no entry in the `paths` of `tsconfig.json` matches it' },
+          data: {
+            specifier: '@/teams/internal/rows',
+            reason: 'no entry in the `paths` of `tsconfig.json` matches it',
+            where: '`paths` in tsconfig.json',
+          },
         },
       ]),
       invalid('src/db/x.ts', "import { rows } from '~/teams/internal/rows';", [{ messageId: 'unknownAlias' }]),
@@ -387,30 +397,32 @@ describe('go-internal/boundaries', () => {
       ),
     ],
     invalid: [
+      invalid('src/teams/store.cjs', "exports.count = require('./internal/rows').count;", [
+        { messageId: 'internalReExport', data: { name: 'count', specifier: './internal/rows', boundary: 'src/teams' } },
+      ]),
       ...[
-        ["module.exports = require('./internal/rows');", '*'],
-        ["module.exports.rows = require('./internal/rows');", 'rows'],
-        ["exports.rows = require('./internal/rows');", 'rows'],
-        ["exports['rows'] = require('./internal/rows');", 'rows'],
-        ["exports.count = require('./internal/rows').count;", 'count'],
-        ["module.exports = { rows: require('./internal/rows') };", 'rows'],
-        ["module.exports = { ...require('./internal/rows') };", '*'],
-        ["Object.assign(module.exports, require('./internal/rows'));", '*'],
-        ["Object.assign(exports, { rows: require('./internal/rows') });", 'rows'],
-        ["const rows = require('./internal/rows'); module.exports = { rows };", 'rows'],
-        ["const rows = require('./internal/rows'); exports.all = rows;", 'all'],
-      ].map(([code = '', name]) =>
+        "module.exports = require('./internal/rows');",
+        "module.exports.rows = require('./internal/rows');",
+        "exports.rows = require('./internal/rows');",
+        "exports['rows'] = require('./internal/rows');",
+        "module.exports = { rows: require('./internal/rows') };",
+        "module.exports = { ...require('./internal/rows') };",
+        "Object.assign(module.exports, require('./internal/rows'));",
+        "Object.assign(exports, { rows: require('./internal/rows') });",
+        "const rows = require('./internal/rows'); module.exports = { rows };",
+        "const rows = require('./internal/rows'); exports.all = rows;",
+      ].map((code) =>
         invalid('src/teams/store.cjs', code, [
-          { messageId: 'internalReExport', data: { name, specifier: './internal/rows', boundary: 'src/teams' } },
+          { messageId: 'internalModuleReExport', data: { specifier: './internal/rows', boundary: 'src/teams' } },
         ]),
       ),
       invalid(
         'src/teams/store.ts',
         "import { createRequire } from 'node:module'; const load = createRequire(import.meta.url); module.exports = load('./internal/rows');",
-        [{ messageId: 'internalReExport' }],
+        [{ messageId: 'internalModuleReExport' }],
       ),
       invalid('src/db/x.cjs', "module.exports = require('#/teams/internal/rows');", [
-        { messageId: 'internalReExport' },
+        { messageId: 'internalModuleReExport' },
         { messageId: 'internalImport' },
       ]),
     ],
@@ -504,13 +516,13 @@ describe('go-internal/boundaries', () => {
     ],
     invalid: [
       invalid('src/db/x.ts', "import { x } from 'some-package/internal/x';", [
-        { messageId: 'internalImport', data: { specifier: 'some-package/internal/x', boundary: 'some-package' } },
+        { messageId: 'packageInternalImport', data: { specifier: 'some-package/internal/x', package: 'some-package' } },
       ]),
       invalid('src/db/x.ts', "import { x } from '@scope/package/src/internal/x';", [
-        { messageId: 'internalImport', data: { specifier: '@scope/package/src/internal/x', boundary: '@scope/package/src' } },
+        { messageId: 'packageInternalImport', data: { specifier: '@scope/package/src/internal/x', package: '@scope/package' } },
       ]),
       invalid('src/db/x.ts', "import { x } from 'some-package/internal';", [
-        { messageId: 'internalImport', data: { specifier: 'some-package/internal', boundary: 'some-package' } },
+        { messageId: 'packageInternalImport', data: { specifier: 'some-package/internal', package: 'some-package' } },
       ]),
       invalid('src/db/x.ts', "import { x } from 'project/src/teams/internal/x';", [
         { messageId: 'internalImport', data: { specifier: 'project/src/teams/internal/x', boundary: 'src/teams' } },
@@ -527,7 +539,7 @@ describe('go-internal/boundaries', () => {
       invalid('src/db/x.ts', "import { x } from '/src/teams/internal/x';", [
         { messageId: 'internalImport', data: { specifier: '/src/teams/internal/x', boundary: 'src/teams' } },
       ]),
-      invalid('src/teams/x.ts', "export * from '/src/teams/internal/x';", [{ messageId: 'internalReExport' }]),
+      invalid('src/teams/x.ts', "export * from '/src/teams/internal/x';", [{ messageId: 'internalModuleReExport' }]),
     ],
   });
 
@@ -557,6 +569,7 @@ describe('go-internal/boundaries', () => {
               specifier: '#missing',
               reason:
                 'no entry in the `paths` of `../package-imports/tsconfig.json` or the `imports` of `../package-imports/package.json` matches it',
+              where: '`imports` in package.json, or to `paths` in tsconfig.json',
             },
           },
         ],

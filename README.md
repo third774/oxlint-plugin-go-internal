@@ -40,7 +40,7 @@ src/
 | `src/teams/layer.ts`                  | `./internal/storage/internal/sql`        | ❌ `layer.ts` is not under `teams/internal/storage/` |
 | `src/teams/index.ts`                  | `export { rows } from './internal/rows'` | ❌ a re-export would make `rows` public to all files |
 
-To make internal code public, declare a new export in a public file, such as `export const rows = internalRows`. Then the public API is a decision in the code, not a side effect of a re-export.
+When files outside `P/` need internal code, declare a new export for it in a public file, such as `export const rows = internalRows`. The new export has the same effect as a re-export, but the public API is then a decision in the code, not a side effect. Make it only for a value that those files need.
 
 When the lint passes, a reviewer can trust one import line without opening other files:
 
@@ -72,7 +72,7 @@ Add the plugin to `.oxlintrc.json`:
 
 - A module under `P/internal/` can be imported only by files under `P/`. When a path has more than one `internal` element, only the last one counts, as in Go. The match is on a whole, case-sensitive path element: `internals`, `_internal` and `Internal` do not count.
 - `internal` is always a directory. No module file is named `internal` (`internal.ts`, `internal.d.ts`, `internal.spec.ts`), and no import ends at an `internal` directory (`./internal`, `#/teams/internal`). Import a file inside the directory, such as `./internal/index`.
-- A file can re-export internal code only if the file itself is inside that code's `internal/` directory, so a re-export never makes code visible to more files. To publish internal code from a public file, declare a new export, such as `export const store = internalStore` or `export type Row = InternalRow`.
+- A file can re-export internal code only if the file itself is inside that code's `internal/` directory, so a re-export never makes code visible to more files. When files outside `P/` need internal code, declare a new export for it in a public file, such as `export const store = internalStore` or `export type Row = InternalRow`.
 - A new export must not publish a whole internal module, because then every export of that module is public, also the ones that are added later. `export const api = rows` after `import * as rows from './internal/rows'`, `export const api = { ...rows }`, and `export const load = () => import('./internal/rows')` are reported. An object deeper in the export, such as Vue's `components: { ...icons }`, uses the module and is not reported.
 - When the rule cannot read a specifier, it reports an error: an alias that matches nothing, and an `import()` or `require()` whose argument is not a string.
 
@@ -125,15 +125,17 @@ A call in this list with a non-string first argument is not reported. Vitest acc
 
 ## Errors
 
-| `messageId`               | Cause                                                                                                    |
-| ------------------------- | -------------------------------------------------------------------------------------------------------- |
-| `internalImport`          | A file outside `P/` imports a module under `P/internal/`.                                                |
-| `internalDirectoryImport` | A file under `P/` imports `P/internal` itself, or a module named `internal`, not a module inside it.     |
-| `internalModuleName`      | The linted file is a module named `internal`.                                                            |
-| `internalReExport`        | A file outside `P/internal/` re-exports code from under `P/internal/`.                                   |
-| `internalModuleExport`    | A file outside `P/internal/` declares an export whose value is a whole module from under `P/internal/`.  |
-| `unknownAlias`            | A specifier that starts with `#` or an `aliasPrefixes` prefix matches no `paths` or `imports` entry.     |
-| `unresolvedSpecifier`     | An `import()` or `require()` argument is not a string literal or a template literal with no expressions. |
+| `messageId`               | Cause                                                                                                                              |
+| ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `internalImport`          | A file outside `P/` imports a module under `P/internal/`.                                                                          |
+| `packageInternalImport`   | A file imports a path under an `internal` element of another package, such as `some-package/internal/x`.                           |
+| `internalDirectoryImport` | A file under `P/` imports `P/internal` itself, or a module named `internal`, not a module inside it.                               |
+| `internalModuleName`      | The linted file is a module named `internal`.                                                                                      |
+| `internalReExport`        | A file outside `P/internal/` re-exports one export of a module under `P/internal/`.                                                |
+| `internalModuleReExport`  | A file outside `P/internal/` re-exports a whole module under `P/internal/`, as `export *` or `module.exports = require('…')` does. |
+| `internalModuleExport`    | A file outside `P/internal/` declares an export whose value is a whole module under `P/internal/`.                                 |
+| `unknownAlias`            | A specifier that starts with `#` or an `aliasPrefixes` prefix matches no `paths` or `imports` entry.                               |
+| `unresolvedSpecifier`     | An `import()` or `require()` argument is not a string literal or a template literal with no expressions.                           |
 
 ## Known limits
 

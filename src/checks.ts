@@ -2,14 +2,14 @@ import path from 'node:path';
 
 import { matchPackageImports } from './package-imports.ts';
 import type { Project } from './project.ts';
-import { findBoundary, isInternalModule, isRelative, isWithin, packageSpecifier, stripSuffix, subpathBoundary } from './module-path.ts';
+import { findBoundary, isInternalModule, isRelative, hasInternalElement, isWithin, packageSpecifier, stripSuffix } from './module-path.ts';
 import type { Boundary } from './module-path.ts';
 
 /** What a module specifier points to. */
 export type Resolution =
   | { readonly _tag: 'Package' }
-  /** A path under an `internal` element of another package: `boundary` is the package name and the path before that element. */
-  | { readonly _tag: 'PackageInternal'; readonly boundary: string }
+  /** A path under an `internal` element of another package. */
+  | { readonly _tag: 'PackageInternal'; readonly packageName: string }
   | {
       readonly _tag: 'UnknownAlias';
       /** The config whose `paths` the specifier does not match, if there is one. */
@@ -66,8 +66,7 @@ const resolvePackageImport = (modulePath: string, importerDirectory: string, pro
  */
 const resolvePackage = (modulePath: string, importer: Importer, project: Project, baseUrl: string | undefined): Resolution => {
   const specifier = modulePath.includes('internal') ? packageSpecifier(modulePath) : undefined;
-  const boundary = specifier === undefined ? undefined : subpathBoundary(specifier.subpath);
-  if (specifier === undefined || boundary === undefined || importer.allowedPackages.has(specifier.name)) {
+  if (specifier === undefined || !hasInternalElement(specifier.subpath) || importer.allowedPackages.has(specifier.name)) {
     return PACKAGE;
   }
   const scope = project.packageScope(importer.directory);
@@ -77,7 +76,7 @@ const resolvePackage = (modulePath: string, importer: Importer, project: Project
   if (baseUrl !== undefined) {
     return { _tag: 'Targets', targets: [path.resolve(baseUrl, modulePath)] };
   }
-  return { _tag: 'PackageInternal', boundary: boundary === '' ? specifier.name : `${specifier.name}/${boundary}` };
+  return { _tag: 'PackageInternal', packageName: specifier.name };
 };
 
 const resolveModulePath = (modulePath: string, importer: Importer, project: Project): Resolution => {

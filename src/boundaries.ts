@@ -21,11 +21,15 @@ import {
 } from './syntax.ts';
 import type { CommonJsExport } from './syntax.ts';
 
-/** An import binding at the top level of a file. */
-interface ImportBinding {
+/** The module that an import binding binds. */
+interface ImportedModule {
   readonly source: string;
   /** Whether the binding is the whole module: `import * as x` or `import x = require(…)`. */
   readonly namespace: boolean;
+}
+
+/** An import binding at the top level of a file. */
+interface ImportBinding extends ImportedModule {
   /** The export that a named import binds, such as `vi` for `import { vi as v }`. */
   readonly imported: string | undefined;
 }
@@ -81,6 +85,8 @@ type Identifier = Extract<ESTree.Node, { readonly type: 'Identifier' }>;
 interface ReExport {
   readonly node: Ranged;
   readonly name: string;
+  /** Whether the name is the whole module, as for `export *` or `export { ns }` after `import * as ns`. */
+  readonly whole: boolean;
 }
 
 /** How `checkImport` reads a specifier. */
@@ -96,16 +102,20 @@ interface ImportOptions {
 const messages = {
   internalImport:
     '`{{specifier}}` is internal to `{{boundary}}/`, so only files under `{{boundary}}/` can import it. Check whether a public module of `{{boundary}}/` already gives you what you need. If not, consider whether this code should become part of the public API of `{{boundary}}/`, or whether this file should depend on it at all. A copy of the code would be a second version that drifts from the first.',
+  packageInternalImport:
+    '`{{specifier}}` is internal to the package `{{package}}`, so only code in that package can import it. The package can change or remove this code without notice. Check whether a public entry point of `{{package}}` already gives you what you need. If not, the next step is a decision for the people who maintain this project: if they own the package, it can make the code public; if not, they can accept the risk and add `{{package}}` to the `allowedPackages` option. A copy of the code would not get the fixes of the package.',
   internalDirectoryImport:
     '`{{specifier}}` ends at `internal`, which is reserved for a directory. Import the module inside `{{path}}/` that you need, so that the import shows which private code this file uses.',
   internalModuleName:
     'Do not name a module `internal`. The name `internal` marks a directory of private code, so a module with that name gives `internal` in an import path two meanings. Rename this module, or move its code into a file inside an `internal/` directory.',
   internalReExport:
-    '`{{name}}` comes from `{{specifier}}`, which is internal to `{{boundary}}/`. A re-export would make it public to every file as a side effect. If `{{name}}` should be part of the public API, declare a new export for it in this file. If not, consider whether this file needs to export it at all.',
+    '`{{name}}` comes from `{{specifier}}`, which is internal to `{{boundary}}/`. A re-export would make it public to every file as a side effect. Check which files outside `{{boundary}}/` need `{{name}}`. If none do, remove the re-export. If some do, you can declare a new export for it in this file. That is a change to the public API of `{{boundary}}/`, with the same effect as the re-export, so make it only for that need.',
+  internalModuleReExport:
+    'This re-export makes every export of `{{specifier}}` public, also the exports that someone adds to it later. That module is internal to `{{boundary}}/`. Check which of its values files outside `{{boundary}}/` need. If none, remove the re-export. If some, declare a new export for each of them in this file, as a decision about the public API of `{{boundary}}/`. A list of every export of the module makes the same leak.',
   internalModuleExport:
-    '`{{name}}` exports the whole module `{{specifier}}`, which is internal to `{{boundary}}/`. Then every export of that module is public, also the exports that are added to it later. Declare a new export for each value that should be public.',
+    '`{{name}}` exports the whole module `{{specifier}}`, which is internal to `{{boundary}}/`. Then every export of that module is public, also the exports that someone adds to it later. Check which values the users of `{{name}}` need. If a public module of `{{boundary}}/` already gives them, use that module. If not, export only those values, each as its own export, as a decision about the public API of `{{boundary}}/`. A list of every export of the module, or the same object under another name, makes the same leak.',
   unknownAlias:
-    '`{{specifier}}` looks like an alias, but {{reason}}, so this rule cannot check where it points. Add the alias to `paths` in a tsconfig.json or jsconfig.json, or for a `#` alias, to `imports` in package.json.',
+    '`{{specifier}}` looks like an alias, but {{reason}}. So this rule cannot see whether the import reaches internal code. Find the tool that resolves this alias, such as the bundler, and add the same mapping to {{where}}. A mapping to a different directory makes TypeScript and this rule read the wrong files. If the specifier has a typo, correct it.',
   unresolvedSpecifier: 'This module specifier is not a string, so this rule cannot check where it points. Use a string literal.',
 } satisfies Record<string, string>;
 
@@ -218,6 +228,12 @@ const unknownAliasReason = (cwd: string, resolution: Extract<Resolution, { _tag:
   return lookups.length === 0 ? 'no config file that maps aliases is above this file' : `no entry in ${lookups.join(' or ')} matches it`;
 };
 
+/** The text for `{{where}}` in the `unknownAlias` message: the files that can map the alias. */
+const unknownAliasTarget = (specifier: string, resolution: Extract<Resolution, { _tag: 'UnknownAlias' }>): string => {
+  const paths = `\`paths\` in ${resolution.config === undefined ? 'tsconfig.json' : path.basename(resolution.config)}`;
+  return specifier.startsWith('#') ? `\`imports\` in package.json, or to ${paths}` : paths;
+};
+
 const createVisitor = (context: Context) => {
   const resolveSpecifier = createSpecifierResolver(createProject());
   let current: FileState | undefined;
@@ -259,11 +275,15 @@ const createVisitor = (context: Context) => {
       case 'Package':
         return;
       case 'PackageInternal':
-        context.report({ node, messageId: 'internalImport', data: { specifier, boundary: resolution.boundary } });
+        context.report({ node, messageId: 'packageInternalImport', data: { specifier, package: resolution.packageName } });
         return;
       case 'UnknownAlias':
         if (how.reportUnknownAlias !== false) {
-          context.report({ node, messageId: 'unknownAlias', data: { specifier, reason: unknownAliasReason(cwd, resolution) } });
+          context.report({
+            node,
+            messageId: 'unknownAlias',
+            data: { specifier, reason: unknownAliasReason(cwd, resolution), where: unknownAliasTarget(specifier, resolution) },
+          });
         }
         return;
       case 'Targets': {
@@ -302,17 +322,17 @@ const createVisitor = (context: Context) => {
     if (published === undefined) {
       return;
     }
-    for (const { node, name } of reExports) {
+    for (const { node, name, whole } of reExports) {
       context.report({
         node,
-        messageId: 'internalReExport',
+        messageId: whole ? 'internalModuleReExport' : 'internalReExport',
         data: { name, specifier, boundary: displayPath(file().cwd, published.owner) },
       });
     }
   };
 
-  /** The module specifier of an import binding, also of `import a = ns.b` through the binding of `ns`. */
-  const importSource = (definition: Definition, seen: Set<Definition>): string | undefined => {
+  /** The module of an import binding, also of `import a = ns.b` through the binding of `ns`. */
+  const importedModule = (definition: Definition, seen: Set<Definition>): ImportedModule | undefined => {
     if (definition.type !== 'ImportBinding' || seen.has(definition)) {
       return undefined;
     }
@@ -321,40 +341,45 @@ const createVisitor = (context: Context) => {
     if (node.type === 'TSImportEqualsDeclaration') {
       const reference = node.moduleReference;
       if (reference.type === 'TSExternalModuleReference') {
-        return reference.expression.value;
+        return { source: reference.expression.value, namespace: true };
       }
       const identifier = leftmostIdentifier(reference);
       const variable = identifier === undefined ? undefined : findVariable(context.sourceCode.getScope(identifier), identifier.name);
-      return variable === undefined ? undefined : variableImportSource(variable, seen);
+      const imported = variable === undefined ? undefined : variableImportedModule(variable, seen);
+      return imported === undefined
+        ? undefined
+        : { source: imported.source, namespace: imported.namespace && reference.type === 'Identifier' };
     }
     const declaration = node.parent;
-    return declaration?.type === 'ImportDeclaration' ? declaration.source.value : undefined;
+    return declaration?.type === 'ImportDeclaration'
+      ? { source: declaration.source.value, namespace: node.type === 'ImportNamespaceSpecifier' }
+      : undefined;
   };
 
-  const variableImportSource = (variable: Variable, seen: Set<Definition>): string | undefined => {
+  const variableImportedModule = (variable: Variable, seen: Set<Definition>): ImportedModule | undefined => {
     for (const definition of variable.defs) {
-      const source = importSource(definition, seen);
-      if (source !== undefined) {
-        return source;
+      const imported = importedModule(definition, seen);
+      if (imported !== undefined) {
+        return imported;
       }
     }
     return undefined;
   };
 
-  /** The module specifier of the import binding that `identifier` refers to, in an export statement whose parent is `parent`. */
-  const localImportSource = (parent: ESTree.Node, identifier: Identifier): string | undefined => {
+  /** The module of the import binding that `identifier` refers to, in an export statement whose parent is `parent`. */
+  const localImportedModule = (parent: ESTree.Node, identifier: Identifier): ImportedModule | undefined => {
     if (parent.type === 'Program') {
-      return file().topLevel.imports.get(identifier.name)?.source;
+      return file().topLevel.imports.get(identifier.name);
     }
     const variable = findVariable(context.sourceCode.getScope(identifier), identifier.name);
-    return variable === undefined ? undefined : variableImportSource(variable, new Set());
+    return variable === undefined ? undefined : variableImportedModule(variable, new Set());
   };
 
   /** Reports internal re-exports for `export { x }` and `export default x`, where `x` is an import binding. */
   const checkLocalReExport = (parent: ESTree.Node, node: Ranged, identifier: Identifier, name = identifier.name): void => {
-    const source = localImportSource(parent, identifier);
-    if (source !== undefined) {
-      checkReExports(source, [{ node, name }]);
+    const imported = localImportedModule(parent, identifier);
+    if (imported !== undefined) {
+      checkReExports(imported.source, [{ node, name, whole: imported.namespace }]);
     }
   };
 
@@ -583,12 +608,12 @@ const createVisitor = (context: Context) => {
     }
     const loaded = loadedModule(base);
     if (loaded !== undefined) {
-      return [{ node: expression, name, specifier: loaded }];
+      return [{ node: expression, name, specifier: loaded, whole: base === expression }];
     }
     if (expression.type === 'Identifier') {
       const binding = file().topLevel.imports.get(expression.name);
       const specifier = bindings().get(expression.name) ?? (binding?.namespace === true ? binding.source : undefined);
-      return specifier === undefined ? [] : [{ node: expression, name, specifier }];
+      return specifier === undefined ? [] : [{ node: expression, name, specifier, whole: true }];
     }
     if (expression.type !== 'ObjectExpression') {
       return [];
@@ -611,8 +636,8 @@ const createVisitor = (context: Context) => {
     let bindings: ReadonlyMap<string, string> | undefined;
     const lazyBindings = (): ReadonlyMap<string, string> => (bindings ??= requireBindings());
     for (const { target, value } of commonJsAssignments) {
-      for (const { node, name, specifier } of commonJsReExports(value, target._tag === 'Module' ? '*' : target.name, lazyBindings)) {
-        checkReExports(specifier, [{ node, name }]);
+      for (const { specifier, ...reExport } of commonJsReExports(value, target._tag === 'Module' ? '*' : target.name, lazyBindings)) {
+        checkReExports(specifier, [reExport]);
       }
     }
   };
@@ -657,19 +682,22 @@ const createVisitor = (context: Context) => {
         checkImport(source, source.value);
         checkReExports(
           source.value,
-          specifiers.map((specifier) => ({ node: specifier, name: exportName(specifier.local) })),
+          specifiers.map((specifier) => ({ node: specifier, name: exportName(specifier.local), whole: false })),
         );
         return;
       }
       if (declaration?.type === 'TSImportEqualsDeclaration') {
         const reference = declaration.moduleReference;
         if (reference.type === 'TSExternalModuleReference') {
-          checkReExports(reference.expression.value, [{ node: declaration.id, name: declaration.id.name }]);
+          checkReExports(reference.expression.value, [{ node: declaration.id, name: declaration.id.name, whole: true }]);
           return;
         }
         const identifier = leftmostIdentifier(reference);
-        if (identifier !== undefined) {
-          checkLocalReExport(node.parent, declaration.id, identifier, declaration.id.name);
+        const imported = identifier === undefined ? undefined : localImportedModule(node.parent, identifier);
+        if (imported !== undefined) {
+          checkReExports(imported.source, [
+            { node: declaration.id, name: declaration.id.name, whole: imported.namespace && reference.type === 'Identifier' },
+          ]);
         }
         return;
       }
@@ -685,7 +713,9 @@ const createVisitor = (context: Context) => {
     ExportAllDeclaration(node: ESTree.ExportAllDeclaration) {
       const { exported, source } = node;
       checkImport(source, source.value);
-      checkReExports(source.value, [exported === null ? { node, name: '*' } : { node: exported, name: exportName(exported) }]);
+      checkReExports(source.value, [
+        exported === null ? { node, name: '*', whole: true } : { node: exported, name: exportName(exported), whole: true },
+      ]);
     },
     ExportDefaultDeclaration(node: ESTree.ExportDefaultDeclaration) {
       const declaration = unwrapExpression(node.declaration);

@@ -82,17 +82,13 @@ export const packageSpecifier = (specifier: string): PackageSpecifier | undefine
   return { name: elements.slice(0, nameLength).join('/'), subpath: elements.slice(nameLength).join('/') };
 };
 
-/**
- * `findBoundary` for the subpath of a package: the elements before its last `internal` element,
- * such as `src` for `src/internal/rows`, or `undefined` if it has no `internal` element.
- */
-export const subpathBoundary = (subpath: string): string | undefined => {
+/** Whether the subpath of a package has an `internal` element, counted as `findBoundary` counts it. */
+export const hasInternalElement = (subpath: string): boolean => {
   if (!subpath.includes(INTERNAL)) {
-    return undefined;
+    return false;
   }
   const elements = path.posix.normalize(subpath).split('/');
-  const last = elements.findLastIndex((element, index) => (index === elements.length - 1 ? moduleName(element) : element) === INTERNAL);
-  return last === -1 ? undefined : elements.slice(0, last).join('/');
+  return elements.some((element, index) => (index === elements.length - 1 ? moduleName(element) : element) === INTERNAL);
 };
 
 /** A path for messages, relative to the working directory. */

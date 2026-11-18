@@ -15,10 +15,12 @@ const oxlint = fileURLToPath(new URL('../../node_modules/oxlint/bin/oxlint', imp
 const onlyGaps = process.argv.includes('--gaps');
 
 const MESSAGE_IDS: ReadonlyArray<readonly [string, RegExp]> = [
-  ['internalImport', /is internal to .*so only files under/],
+  ['internalImport', /is internal to `[^`]*\/`, so only files under/],
+  ['packageInternalImport', /is internal to the package/],
   ['internalDirectoryImport', /ends at `internal`/],
   ['internalModuleName', /Do not name a module `internal`/],
   ['internalReExport', /A re-export would make it public/],
+  ['internalModuleReExport', /This re-export makes every export of/],
   ['internalModuleExport', /exports the whole module/],
   ['unknownAlias', /looks like an alias, but/],
   ['unresolvedSpecifier', /This module specifier is not a string/],

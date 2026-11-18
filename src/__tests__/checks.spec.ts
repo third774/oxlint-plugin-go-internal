@@ -66,15 +66,14 @@ describe('checks', () => {
     );
   });
 
-  it('check a package specifier with an `internal` element as a path of another package', () => {
+  it('check a package specifier with an `internal` element as internal to its package', () => {
     fc.assert(
       fc.property(segments(0), segments(1), fc.constantFrom('package', '@scope/package'), (importerElements, subpath, name) => {
         const importerDirectory = path.join(src, ...importerElements);
         const resolution = resolveSpecifier(`${name}/${subpath.join('/')}`, importer(importerDirectory), project);
-        const internal = subpath.lastIndexOf('internal');
 
         expect(resolution).toStrictEqual(
-          internal === -1 ? { _tag: 'Package' } : { _tag: 'PackageInternal', boundary: [name, ...subpath.slice(0, internal)].join('/') },
+          subpath.includes('internal') ? { _tag: 'PackageInternal', packageName: name } : { _tag: 'Package' },
         );
       }),
     );
