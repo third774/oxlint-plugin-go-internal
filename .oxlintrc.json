@@ -5,7 +5,7 @@
   "categories": {
     "correctness": "error"
   },
-  "ignorePatterns": ["dist"],
+  "ignorePatterns": ["dist", "fixtures/playground/*/**"],
   "rules": {
     "go-internal/boundaries": "error"
   },

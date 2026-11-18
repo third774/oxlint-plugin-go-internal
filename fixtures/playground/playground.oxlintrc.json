@@ -1,0 +1,6 @@
+{
+  "jsPlugins": ["../../src/index.ts"],
+  "categories": { "correctness": "off" },
+  "ignorePatterns": ["run.ts"],
+  "rules": { "go-internal/boundaries": "error" }
+}

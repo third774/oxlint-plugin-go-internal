@@ -4,5 +4,5 @@
   "semi": true,
   "useTabs": false,
   "sortPackageJson": false,
-  "ignorePatterns": ["dist"]
+  "ignorePatterns": ["dist", "fixtures/playground/*/**"]
 }
