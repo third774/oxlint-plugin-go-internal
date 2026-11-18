@@ -3,7 +3,7 @@ import path from 'node:path';
 import type { Context, CreateOnceRule, Definition, ESTree, Ranged, Scope, Variable } from '@oxlint/plugins';
 
 import { createTsconfigAliasResolver } from './aliases.ts';
-import { importViolation, reExportViolation, resolveSpecifier } from './checks.ts';
+import { createSpecifierResolver, importViolation, reExportViolation } from './checks.ts';
 import { displayPath, isInternalModule } from './module-path.ts';
 import { optionsSchema, parseOptions } from './options.ts';
 import type { RuleOptions } from './options.ts';
@@ -12,6 +12,12 @@ interface FileState {
   readonly importerDirectory: string;
   readonly cwd: string;
   readonly options: RuleOptions;
+  /** The module specifier of each import binding at the top level of the file. */
+  readonly moduleImports: ReadonlyMap<string, string>;
+  /** The `require(…)` calls, checked when the whole file is known. */
+  readonly requireCalls: ESTree.CallExpression[];
+  /** The `require(…)` of each `import x = require(…)`, which is in the source text but is not a call. */
+  readonly requireReferences: ESTree.TSExternalModuleReference[];
 }
 
 /** A name that a statement re-exports, and the node to report on. */
@@ -73,6 +79,42 @@ const importSource = (definition: Definition): string | undefined => {
   return declaration?.type === 'ImportDeclaration' ? declaration.source.value : undefined;
 };
 
+/**
+ * The import bindings of the top-level statements. A binding at the top level cannot be shadowed
+ * there, so this gives what scope analysis gives for a name that a top-level statement exports.
+ */
+const moduleImports = (program: ESTree.Program): ReadonlyMap<string, string> => {
+  const sources = new Map<string, string>();
+  const add = (name: string, source: string): void => {
+    if (!sources.has(name)) {
+      sources.set(name, source);
+    }
+  };
+  for (const statement of program.body) {
+    if (statement.type === 'ImportDeclaration') {
+      for (const specifier of statement.specifiers) {
+        add(specifier.local.name, statement.source.value);
+      }
+      continue;
+    }
+    const declaration = statement.type === 'ExportNamedDeclaration' ? statement.declaration : statement;
+    if (declaration?.type === 'TSImportEqualsDeclaration' && declaration.moduleReference.type === 'TSExternalModuleReference') {
+      add(declaration.id.name, declaration.moduleReference.expression.value);
+    }
+  }
+  return sources;
+};
+
+const REQUIRE_WORD = /\brequire\b/g;
+
+/**
+ * Whether the source text has no `require` other than the `count` that the visitor saw at call or
+ * `import x = require(…)` positions. Then no binding named `require` exists, because a binding
+ * needs its name in the text. A `\u` escape can spell an identifier without its name in the text.
+ */
+const hasOnlyRequireReferences = (text: string, count: number): boolean =>
+  !text.includes('\\u') && (text.match(REQUIRE_WORD)?.length ?? 0) === count;
+
 const findVariable = (scope: Scope | null, name: string): Variable | undefined =>
   scope === null ? undefined : (scope.set.get(name) ?? findVariable(scope.upper, name));
 
@@ -87,7 +129,7 @@ const variableImportSource = (variable: Variable): string | undefined => {
 };
 
 const createVisitor = (context: Context) => {
-  const aliases = createTsconfigAliasResolver();
+  const resolveSpecifier = createSpecifierResolver(createTsconfigAliasResolver());
   let current: FileState | undefined;
 
   const loadFile = (): FileState => {
@@ -95,6 +137,9 @@ const createVisitor = (context: Context) => {
       importerDirectory: path.dirname(context.filename),
       cwd: context.cwd,
       options: parseOptions(context.options),
+      moduleImports: moduleImports(context.sourceCode.ast),
+      requireCalls: [],
+      requireReferences: [],
     };
     return current;
   };
@@ -104,7 +149,7 @@ const createVisitor = (context: Context) => {
   /** Reports internal imports, `internal` directory imports and unknown aliases for a module specifier that the file loads. */
   const checkImport = (node: Ranged, specifier: string): void => {
     const { importerDirectory, cwd } = file();
-    const resolution = resolveSpecifier(specifier, importerDirectory, aliases);
+    const resolution = resolveSpecifier(specifier, importerDirectory);
     switch (resolution._tag) {
       case 'Package':
         return;
@@ -141,7 +186,7 @@ const createVisitor = (context: Context) => {
   /** Reports internal re-exports for names that the file re-exports from a module specifier. */
   const checkReExports = (specifier: string, reExports: readonly ReExport[]): void => {
     const { importerDirectory, cwd } = file();
-    const resolution = resolveSpecifier(specifier, importerDirectory, aliases);
+    const resolution = resolveSpecifier(specifier, importerDirectory);
     if (resolution._tag !== 'Targets') {
       return;
     }
@@ -158,10 +203,18 @@ const createVisitor = (context: Context) => {
     }
   };
 
-  /** Reports internal re-exports for `export { x }` and `export default x`, where `x` is an import binding. */
-  const checkLocalReExport = (node: Ranged, identifier: ESTree.IdentifierReference): void => {
+  /** The module specifier of the import binding that `identifier` refers to, in an export statement whose parent is `parent`. */
+  const localImportSource = (parent: ESTree.Node, identifier: ESTree.IdentifierReference): string | undefined => {
+    if (parent.type === 'Program') {
+      return file().moduleImports.get(identifier.name);
+    }
     const variable = findVariable(context.sourceCode.getScope(identifier), identifier.name);
-    const source = variable === undefined ? undefined : variableImportSource(variable);
+    return variable === undefined ? undefined : variableImportSource(variable);
+  };
+
+  /** Reports internal re-exports for `export { x }` and `export default x`, where `x` is an import binding. */
+  const checkLocalReExport = (parent: ESTree.Node, node: Ranged, identifier: ESTree.IdentifierReference): void => {
+    const source = localImportSource(parent, identifier);
     if (source !== undefined) {
       checkReExports(source, [{ node, name: identifier.name }]);
     }
@@ -176,23 +229,54 @@ const createVisitor = (context: Context) => {
     return variable === undefined || variable.scope.type === 'global';
   };
 
-  const checkCall = (node: ESTree.CallExpression): void => {
-    const name = calleeName(node.callee);
-    if (name === undefined) {
-      return;
-    }
+  /** Reports a call whose first argument is a module specifier, if the argument is a string. */
+  const checkModuleCall = (node: ESTree.CallExpression): void => {
     const [argument] = node.arguments;
     const specifier = staticString(argument);
-    if (isGlobalRequire(node.callee)) {
-      if (specifier === undefined) {
-        context.report({ node: argument ?? node, messageId: 'unresolvedSpecifier' });
-      } else if (argument !== undefined) {
-        checkImport(argument, specifier);
-      }
+    if (specifier !== undefined && argument !== undefined) {
+      checkImport(argument, specifier);
+    }
+  };
+
+  /** Reports a call of the global `require`, which must have a string argument. */
+  const checkRequire = (node: ESTree.CallExpression): void => {
+    const [argument] = node.arguments;
+    const specifier = staticString(argument);
+    if (specifier === undefined) {
+      context.report({ node: argument ?? node, messageId: 'unresolvedSpecifier' });
+    } else if (argument !== undefined) {
+      checkImport(argument, specifier);
+    }
+  };
+
+  const checkCall = (node: ESTree.CallExpression): void => {
+    const { callee } = node;
+    if (callee.type === 'Identifier' && callee.name === 'require') {
+      file().requireCalls.push(node);
       return;
     }
-    if (file().options.moduleCallees.has(name) && specifier !== undefined && argument !== undefined) {
-      checkImport(argument, specifier);
+    const name = calleeName(callee);
+    if (name !== undefined && file().options.moduleCallees.has(name)) {
+      checkModuleCall(node);
+    }
+  };
+
+  /**
+   * Checks the `require(…)` calls. Scope analysis tells whether a call is of the global `require`,
+   * but it reads the whole file, so it runs only when the file can have a binding named `require`.
+   */
+  const checkRequireCalls = (): void => {
+    const { requireCalls, requireReferences, options } = file();
+    if (requireCalls.length === 0) {
+      return;
+    }
+    const unbound = hasOnlyRequireReferences(context.sourceCode.text, requireCalls.length + requireReferences.length);
+    for (const call of requireCalls) {
+      if (unbound || isGlobalRequire(call.callee)) {
+        checkRequire(call);
+      } else if (options.moduleCallees.has('require')) {
+        checkModuleCall(call);
+      }
     }
   };
 
@@ -222,7 +306,7 @@ const createVisitor = (context: Context) => {
       }
       for (const specifier of specifiers) {
         if (specifier.local.type === 'Identifier') {
-          checkLocalReExport(specifier, specifier.local);
+          checkLocalReExport(node.parent, specifier, specifier.local);
         }
       }
     },
@@ -233,12 +317,12 @@ const createVisitor = (context: Context) => {
     },
     ExportDefaultDeclaration(node: ESTree.ExportDefaultDeclaration) {
       if (node.declaration.type === 'Identifier') {
-        checkLocalReExport(node.declaration, node.declaration);
+        checkLocalReExport(node.parent, node.declaration, node.declaration);
       }
     },
     TSExportAssignment(node: ESTree.TSExportAssignment) {
       if (node.expression.type === 'Identifier') {
-        checkLocalReExport(node.expression, node.expression);
+        checkLocalReExport(node.parent, node.expression, node.expression);
       }
     },
     ImportExpression(node: ESTree.ImportExpression) {
@@ -254,10 +338,12 @@ const createVisitor = (context: Context) => {
     },
     TSImportEqualsDeclaration(node: ESTree.TSImportEqualsDeclaration) {
       if (node.moduleReference.type === 'TSExternalModuleReference') {
+        file().requireReferences.push(node.moduleReference);
         checkImport(node.moduleReference.expression, node.moduleReference.expression.value);
       }
     },
     CallExpression: checkCall,
+    'Program:exit': checkRequireCalls,
   };
 };
 

@@ -47,6 +47,8 @@ describe('go-internal/boundaries', () => {
       valid('src/db/x.spec.ts', "vi.mock('#/teams/store');"),
       valid('src/db/x.spec.ts', "vi.mock(import('#/teams/store'));"),
       valid('src/db/x.ts', 'const req = () => {}; const require = req; require(name);'),
+      valid('src/db/x.ts', "require('#/teams/internal/rows'); function require(name) { return name; }"),
+      valid('src/db/x.ts', "const requ\\u0069re = (name) => name; require('#/teams/internal/rows');"),
     ],
     invalid: [
       invalid('src/db/__tests__/migration.spec.ts', "import { store } from '#/teams/internal/storage/store';", [
@@ -80,6 +82,10 @@ describe('go-internal/boundaries', () => {
       invalid('src/db/x.ts', "const rows = await import('#/teams/internal/rows');", [{ messageId: 'internalImport' }]),
       invalid('src/db/x.ts', 'const rows = await import(`#/teams/internal/rows`);', [{ messageId: 'internalImport' }]),
       invalid('src/db/x.ts', "const rows = require('#/teams/internal/rows');", [{ messageId: 'internalImport' }]),
+      invalid('src/db/x.ts', "import rows = require('#/teams/internal/rows'); const more = require('#/teams/internal/rows');", [
+        { messageId: 'internalImport', column: 22 },
+        { messageId: 'internalImport', column: 69 },
+      ]),
       invalid('src/db/x.ts', "import raw from '#/teams/internal/rows?raw';", [
         { messageId: 'internalImport', data: { specifier: '#/teams/internal/rows?raw', boundary: 'src/teams' } },
       ]),
@@ -168,6 +174,12 @@ describe('go-internal/boundaries', () => {
         { messageId: 'internalReExport' },
       ]),
       invalid('src/teams/store.ts', "import * as store from './internal/storage/store'; export { store };", [
+        { messageId: 'internalReExport' },
+      ]),
+      invalid('src/teams/store.ts', "export { TeamRow }; import { TeamRow } from './internal/storage/store';", [
+        { messageId: 'internalReExport', data: { name: 'TeamRow', specifier: './internal/storage/store', boundary: 'src/teams' } },
+      ]),
+      invalid('src/teams/store.ts', "declare module 'teams' { import { TeamRow } from './internal/storage/store'; export { TeamRow }; }", [
         { messageId: 'internalReExport' },
       ]),
       invalid('src/teams/store.ts', "import store from './internal/storage/store'; export default store;", [

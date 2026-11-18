@@ -1,6 +1,7 @@
 import path from 'node:path';
 
 const INTERNAL = 'internal';
+const INTERNAL_ELEMENT = `${path.sep}${INTERNAL}`;
 
 /** The directory `P` that owns an `internal` directory, and that directory, `P/internal`. */
 export interface Boundary {
@@ -22,7 +23,15 @@ export const isInternalModule = (modulePath: string): boolean => moduleName(modu
  * The last element counts by its module name, so `…/internal.ts` also has a boundary.
  */
 export const findBoundary = (target: string): Boundary | undefined => {
+  // Resolving an absolute path cannot add `internal` to it: it removes elements, and on Windows can add a drive.
+  if (path.isAbsolute(target) && !target.includes(INTERNAL)) {
+    return undefined;
+  }
   let current = path.resolve(target);
+  // Every element after the root follows a separator, so a path without `<sep>internal` has no boundary.
+  if (!current.includes(INTERNAL_ELEMENT)) {
+    return undefined;
+  }
   let name = moduleName(current);
   for (;;) {
     const parent = path.dirname(current);
