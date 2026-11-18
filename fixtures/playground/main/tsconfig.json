@@ -1,0 +1,14 @@
+{
+  "compilerOptions": {
+    "module": "preserve",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "jsx": "react-jsx",
+    "paths": {
+      "#/*": ["./src/*"],
+      "@/*": ["./src/*"],
+      "@rows": ["./src/teams/internal/rows"],
+      "@teams-private/*": ["./src/teams/internal/*"]
+    }
+  }
+}

@@ -8,5 +8,6 @@ This package is the oxlint JS plugin behind the `go-internal/boundaries` rule, p
 - Keep path logic in `src/module-path.ts` and `src/checks.ts`, free of AST types, so that the property tests can call it directly.
 - JS plugins are alpha and not semver. Keep `@oxlint/plugins` at the same version as `oxlint`, and keep `src/__tests__/cli.spec.ts` running the real CLI.
 - `fixtures/` holds tsconfig projects for `RuleTester` cases. The rule does not read imported files, so the fixtures have none.
+- `fixtures/playground/` holds projects for trying patterns with the real CLI. Run `node fixtures/playground/run.ts --gaps` to compare the reports with the `// expect:` markers. Lint, format and test runs skip its projects. Its `README.md` describes it.
 - For a change that needs a release, add a changeset with `pnpm changeset`. `.changeset/README.md` describes the release process.
 - Run `pnpm checks` after changing this package.

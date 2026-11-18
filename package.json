@@ -51,7 +51,7 @@
     "format": "oxfmt --check .",
     "format:write": "oxfmt --write .",
     "prepack": "pnpm build",
-    "test": "vitest run",
+    "test": "vitest run --dir src",
     "typecheck": "oxlint --type-aware --type-check ."
   },
   "dependencies": {
