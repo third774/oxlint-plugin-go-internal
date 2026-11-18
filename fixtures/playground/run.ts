@@ -19,7 +19,8 @@ const MESSAGE_IDS: ReadonlyArray<readonly [string, RegExp]> = [
   ['internalDirectoryImport', /ends at `internal`/],
   ['internalModuleName', /Do not name a module `internal`/],
   ['internalReExport', /A re-export would make it public/],
-  ['unknownAlias', /starts with `#`, but no `paths` entry/],
+  ['internalModuleExport', /exports the whole module/],
+  ['unknownAlias', /looks like an alias, but/],
   ['unresolvedSpecifier', /This module specifier is not a string/],
 ];
 

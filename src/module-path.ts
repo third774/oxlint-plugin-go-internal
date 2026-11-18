@@ -60,8 +60,40 @@ export const stripSuffix = (specifier: string): string => {
   return hash === -1 ? withoutQuery : withoutQuery.slice(0, hash);
 };
 
-export const isRelativeOrAbsolute = (specifier: string): boolean =>
-  specifier === '.' || specifier === '..' || specifier.startsWith('./') || specifier.startsWith('../') || path.isAbsolute(specifier);
+export const isRelative = (specifier: string): boolean =>
+  specifier === '.' || specifier === '..' || specifier.startsWith('./') || specifier.startsWith('../');
+
+/** A package name and the path after it: `@scope/name` and `internal/x` for `@scope/name/internal/x`. */
+export interface PackageSpecifier {
+  readonly name: string;
+  readonly subpath: string;
+}
+
+/** The parts of a bare specifier, or `undefined` for a specifier with a protocol, such as `node:fs`. */
+export const packageSpecifier = (specifier: string): PackageSpecifier | undefined => {
+  if (specifier.includes(':')) {
+    return undefined;
+  }
+  const elements = specifier.split('/');
+  const nameLength = specifier.startsWith('@') ? 2 : 1;
+  if (elements.length < nameLength || elements.slice(0, nameLength).includes('')) {
+    return undefined;
+  }
+  return { name: elements.slice(0, nameLength).join('/'), subpath: elements.slice(nameLength).join('/') };
+};
+
+/**
+ * `findBoundary` for the subpath of a package: the elements before its last `internal` element,
+ * such as `src` for `src/internal/rows`, or `undefined` if it has no `internal` element.
+ */
+export const subpathBoundary = (subpath: string): string | undefined => {
+  if (!subpath.includes(INTERNAL)) {
+    return undefined;
+  }
+  const elements = path.posix.normalize(subpath).split('/');
+  const last = elements.findLastIndex((element, index) => (index === elements.length - 1 ? moduleName(element) : element) === INTERNAL);
+  return last === -1 ? undefined : elements.slice(0, last).join('/');
+};
 
 /** A path for messages, relative to the working directory. */
 export const displayPath = (cwd: string, target: string): string => {

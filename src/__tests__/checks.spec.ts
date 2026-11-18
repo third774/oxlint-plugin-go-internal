@@ -4,12 +4,21 @@ import { fileURLToPath } from 'node:url';
 import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
 
-import { createTsconfigAliasResolver } from '../aliases.ts';
 import { createSpecifierResolver, importViolation, reExportViolation, resolveSpecifier } from '../checks.ts';
+import type { Importer } from '../checks.ts';
+import { DEFAULT_ALIAS_PREFIXES } from '../options.ts';
+import { createProject } from '../project.ts';
 
-const project = fileURLToPath(new URL('../../fixtures/project/', import.meta.url));
-const src = path.join(project, 'src');
-const aliases = createTsconfigAliasResolver();
+const src = fileURLToPath(new URL('../../fixtures/project/src/', import.meta.url));
+const project = createProject();
+
+/** A file in `directory`, with the default options. */
+const importer = (directory: string): Importer => ({
+  file: path.join(directory, 'x.ts'),
+  directory,
+  aliasPrefixes: DEFAULT_ALIAS_PREFIXES,
+  allowedPackages: new Set(),
+});
 
 const segments = (minLength: number) =>
   fc.array(fc.constantFrom('a', 'b', 'internal', 'internals', 'Internal'), {
@@ -18,7 +27,7 @@ const segments = (minLength: number) =>
   });
 
 const outcome = (importerDirectory: string, specifier: string) => {
-  const resolution = resolveSpecifier(specifier, importerDirectory, aliases);
+  const resolution = resolveSpecifier(specifier, importer(importerDirectory), project);
   return resolution._tag === 'Targets'
     ? {
         targets: resolution.targets,
@@ -31,8 +40,8 @@ const outcome = (importerDirectory: string, specifier: string) => {
 describe('checks', () => {
   it('give the same result for a relative specifier and an alias of the same target', () => {
     fc.assert(
-      fc.property(segments(0), segments(1), (importer, target) => {
-        const importerDirectory = path.join(src, ...importer);
+      fc.property(segments(0), segments(1), (importerElements, target) => {
+        const importerDirectory = path.join(src, ...importerElements);
         const targetPath = path.join(src, ...target);
         const relative = path.relative(importerDirectory, targetPath).split(path.sep).join('/');
         const relativeSpecifier = relative.startsWith('..') ? relative : `./${relative}`;
@@ -44,23 +53,37 @@ describe('checks', () => {
   });
 
   it('resolve a specifier the same way when they keep resolutions', () => {
-    const resolve = createSpecifierResolver(aliases);
+    const resolve = createSpecifierResolver(project);
     fc.assert(
-      fc.property(segments(0), segments(1), fc.constantFrom('./', '../', '#/', 'package/'), (importer, target, prefix) => {
-        const importerDirectory = path.join(src, ...importer);
+      fc.property(segments(0), segments(1), fc.constantFrom('./', '../', '#/', 'package/'), (importerElements, target, prefix) => {
+        const file = importer(path.join(src, ...importerElements));
         const specifier = `${prefix}${target.join('/')}`;
-        const expected = resolveSpecifier(specifier, importerDirectory, aliases);
+        const expected = resolveSpecifier(specifier, file, project);
 
-        expect(resolve(specifier, importerDirectory)).toStrictEqual(expected);
-        expect(resolve(specifier, importerDirectory)).toStrictEqual(expected);
+        expect(resolve(specifier, file)).toStrictEqual(expected);
+        expect(resolve(specifier, file)).toStrictEqual(expected);
+      }),
+    );
+  });
+
+  it('check a package specifier with an `internal` element as a path of another package', () => {
+    fc.assert(
+      fc.property(segments(0), segments(1), fc.constantFrom('package', '@scope/package'), (importerElements, subpath, name) => {
+        const importerDirectory = path.join(src, ...importerElements);
+        const resolution = resolveSpecifier(`${name}/${subpath.join('/')}`, importer(importerDirectory), project);
+        const internal = subpath.lastIndexOf('internal');
+
+        expect(resolution).toStrictEqual(
+          internal === -1 ? { _tag: 'Package' } : { _tag: 'PackageInternal', boundary: [name, ...subpath.slice(0, internal)].join('/') },
+        );
       }),
     );
   });
 
   it('allow the import of every re-export that they allow', () => {
     fc.assert(
-      fc.property(segments(0), segments(1), (importer, target) => {
-        const importerDirectory = path.join(src, ...importer);
+      fc.property(segments(0), segments(1), (importerElements, target) => {
+        const importerDirectory = path.join(src, ...importerElements);
         const targets = [path.join(src, ...target)];
 
         fc.pre(reExportViolation(importerDirectory, targets) === undefined);

@@ -1,0 +1,12 @@
+{
+  "name": "package-imports",
+  "private": true,
+  "imports": {
+    "#/*": "./src/*",
+    "#dep": "some-dependency",
+    "#conditions": {
+      "node": "./src/teams/internal/node.js",
+      "default": "./src/teams/index.js"
+    }
+  }
+}

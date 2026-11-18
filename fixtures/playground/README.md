@@ -20,6 +20,6 @@ Put `// expect: <messageId>` at the end of a line that a user would expect the r
 | `configdir/`                | `paths` with `${configDir}` in an extended base config                                          |
 | `workspace/`                | A deep import into a workspace package that has no `exports` field                              |
 
-- `playground.oxlintrc.json` is the oxlint config. It does not have the name `.oxlintrc.json`, so the lint of this repository does not use it as a nested config. To lint by hand, run `oxlint -c playground.oxlintrc.json .` in this directory.
+- `playground.oxlintrc.json` is the oxlint config. It turns off oxlint's own rules, so that only this rule reports. It does not have the name `.oxlintrc.json`, so the lint of this repository does not use it as a nested config. To lint by hand, run `oxlint -c playground.oxlintrc.json .` in this directory.
 - `tsconfig.json` here has no `paths`. It stops the projects without a tsconfig, such as `jsconfig/`, from finding this repository's tsconfig.
 - The lint, format and test runs of this repository skip the projects. They check only `run.ts`.
