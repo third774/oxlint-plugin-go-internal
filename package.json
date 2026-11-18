@@ -1,6 +1,6 @@
 {
   "name": "oxlint-plugin-go-internal",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "An oxlint JS plugin that enforces Go's internal directory rule on TypeScript and JavaScript imports",
   "license": "MIT",
   "repository": {
